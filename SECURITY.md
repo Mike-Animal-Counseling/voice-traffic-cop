@@ -8,7 +8,7 @@ Security fixes are applied to the latest version on the `main` branch and the cu
 
 Please do not open a public issue for a suspected security or privacy vulnerability. Use GitHub's private vulnerability reporting flow:
 
-https://github.com/Mike-Animal-Counseling/Voice-Traffic-Cop/security/advisories/new
+https://github.com/Mike-Animal-Counseling/voice-traffic-cop/security/advisories/new
 
 Include clear reproduction steps, the affected browser and operating system, the expected impact, and any suggested mitigation. Do not attach microphone recordings, credentials, tokens, or unrelated personal data.
 
