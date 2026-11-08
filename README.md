@@ -64,7 +64,7 @@ Microphone access requires a secure context, so use the HTTPS deployment or `loc
 You will need a recent version of [Node.js](https://nodejs.org/).
 
 ```bash
-git clone https://github.com/Mike-Animal-Counseling/Voice-Traffic-Cop.git
+git clone https://github.com/Mike-Animal-Counseling/voice-traffic-cop.git
 cd Voice-Traffic-Cop
 npm install
 npm run dev
