@@ -35,19 +35,32 @@ const autoCorrelate = (buffer: Float32Array, sampleRate: number): number | null 
   let bestOffset = -1;
   let bestCorrelation = 0;
   const maxSamples = Math.floor(buffer.length / 2);
+  const firstOffset = Math.max(24, Math.floor(sampleRate / HIGH_PITCH_MAX));
+  const lastOffset = Math.min(maxSamples - 1, Math.ceil(sampleRate / LOW_PITCH_MIN));
+  const peaks: { offset: number; correlation: number }[] = [];
+  let before = 0;
+  let previous = 0;
 
-  for (let offset = 24; offset < maxSamples; offset += 1) {
+  for (let offset = firstOffset - 1; offset <= lastOffset + 1; offset += 1) {
     let correlation = 0;
     for (let i = 0; i < maxSamples; i += 1) correlation += Math.abs(buffer[i] - buffer[i + offset]);
     correlation = 1 - correlation / maxSamples;
-    if (correlation > bestCorrelation) {
+    if (offset >= firstOffset && offset <= lastOffset && correlation > bestCorrelation) {
       bestCorrelation = correlation;
       bestOffset = offset;
     }
+    if (offset > firstOffset && previous >= before && previous > correlation) {
+      peaks.push({ offset: offset - 1, correlation: previous });
+    }
+    before = previous;
+    previous = correlation;
   }
 
-  if (bestCorrelation > 0.88 && bestOffset > 0) return sampleRate / bestOffset;
-  return null;
+  if (bestCorrelation <= 0.88 || bestOffset < 0) return null;
+  // A multiple of the true period can align better with the sampled frames.
+  const minimumPeak = Math.max(0.88, bestCorrelation - Math.min(0.04, rms * 0.2));
+  const fundamental = peaks.find((peak) => peak.correlation >= minimumPeak);
+  return sampleRate / (fundamental?.offset ?? bestOffset);
 };
 
 const getVolume = (buffer: Float32Array) => {
@@ -91,8 +104,10 @@ export const useMicrophoneControls = () => {
   const emergencyStopMsRef = useRef(0);
   const previousVolumeRef = useRef(0);
   const lastFrameRef = useRef<number | null>(null);
+  const requestVersion = useRef(0);
 
   const stopMonitoring = useCallback(() => {
+    requestVersion.current += 1;
     if (rafRef.current) cancelAnimationFrame(rafRef.current);
     rafRef.current = null;
 
@@ -106,9 +121,26 @@ export const useMicrophoneControls = () => {
 
     streamRef.current?.getTracks().forEach((track) => track.stop());
     streamRef.current = null;
+    recentPitchRef.current = [];
+    lastPitchRef.current = null;
+    stableForRef.current = 0;
+    pendingAxisRef.current = null;
+    pendingAxisMsRef.current = 0;
+    axisLockMsRef.current = 0;
+    commandHoldMsRef.current = 0;
+    emergencyStopMsRef.current = 0;
+    previousVolumeRef.current = 0;
+    lastClassifiedAxisRef.current = 'northSouth';
+    commandedAxisRef.current = 'northSouth';
   }, []);
 
   useEffect(() => stopMonitoring, [stopMonitoring]);
+
+  const resetMicrophone = useCallback(() => {
+    stopMonitoring();
+    setSnapshot(initialSnapshot);
+    setErrorMessage(null);
+  }, [stopMonitoring]);
 
   const requestPermission = useCallback(async () => {
     if (!navigator.mediaDevices?.getUserMedia || typeof AudioContext === 'undefined') {
@@ -118,6 +150,7 @@ export const useMicrophoneControls = () => {
     }
 
     if (streamRef.current && audioContextRef.current) return true;
+    const version = ++requestVersion.current;
 
     try {
       setErrorMessage(null);
@@ -128,8 +161,14 @@ export const useMicrophoneControls = () => {
           autoGainControl: true,
         },
       });
+      if (version !== requestVersion.current) {
+        stream.getTracks().forEach((track) => track.stop());
+        return false;
+      }
 
+      streamRef.current = stream;
       const audioContext = new AudioContext();
+      audioContextRef.current = audioContext;
       const analyser = audioContext.createAnalyser();
       analyser.fftSize = 2048;
       analyser.smoothingTimeConstant = 0.82;
@@ -137,12 +176,10 @@ export const useMicrophoneControls = () => {
       const source = audioContext.createMediaStreamSource(stream);
       source.connect(analyser);
 
-      streamRef.current = stream;
-      audioContextRef.current = audioContext;
       analyserRef.current = analyser;
       lastFrameRef.current = performance.now();
 
-      setSnapshot((current) => ({ ...current, permission: 'granted', transcript: 'Listening for Pip cues' }));
+      setSnapshot({ ...initialSnapshot, permission: 'granted', transcript: 'Listening for Pip cues' });
 
       const buffer = new Float32Array(analyser.fftSize);
       const tick = (now: number) => {
@@ -267,6 +304,8 @@ export const useMicrophoneControls = () => {
       rafRef.current = requestAnimationFrame(tick);
       return true;
     } catch (error) {
+      if (version !== requestVersion.current) return false;
+      stopMonitoring();
       const message =
         error instanceof DOMException && error.name === 'NotAllowedError'
           ? 'Microphone access was blocked. You can still play with keyboard or touch controls.'
@@ -275,7 +314,7 @@ export const useMicrophoneControls = () => {
       setSnapshot((current) => ({ ...current, permission: 'denied', transcript: 'Microphone blocked' }));
       return false;
     }
-  }, []);
+  }, [stopMonitoring]);
 
   const laneControl = useMemo<LaneControl>(() => {
     let activeAxis: Axis =
@@ -295,5 +334,5 @@ export const useMicrophoneControls = () => {
     return { activeAxis, emergencyStop, boost, inputLabel };
   }, [snapshot]);
 
-  return { snapshot, laneControl, requestPermission, stopMonitoring, errorMessage };
+  return { snapshot, laneControl, requestPermission, resetMicrophone, errorMessage };
 };

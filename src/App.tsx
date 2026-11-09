@@ -1,19 +1,16 @@
 import type React from 'react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { CENTER_X, CENTER_Y, MAX_CONGESTION, WORLD_HEIGHT, WORLD_WIDTH } from './game/constants';
+import { MAX_CONGESTION } from './game/constants';
 import { createInitialState, startGame, updateGame } from './game/logic';
+import { JunctionViewport } from './game/JunctionViewport';
+import { signalAspect } from './game/signals';
 import { useManualControls } from './hooks/useManualControls';
 import { useMicrophoneControls } from './hooks/useMicrophoneControls';
 import { useTownMusic } from './hooks/useTownMusic';
-import type { Axis, GameState, Vehicle } from './game/types';
+import type { Axis, GameState, MicSnapshot } from './game/types';
 
 type ControlMode = 'voice' | 'manual';
 type PipPose = 'idle' | 'wave' | 'jam' | 'stop' | 'cheer';
-
-const HORIZONTAL_ROAD_MOUTH_LEFT = 245;
-const HORIZONTAL_ROAD_MOUTH_RIGHT = 925;
-const HORIZONTAL_MOOD_LEFT = 320;
-const HORIZONTAL_MOOD_RIGHT = 880;
 
 const axisLabel = (axis: Axis) => (axis === 'northSouth' ? 'North–South' : 'East–West');
 const axisShortLabel = (axis: Axis) => (axis === 'northSouth' ? 'N · S' : 'E · W');
@@ -33,76 +30,6 @@ const getStoredBest = () => {
 };
 
 const preventNativeDrag = (event: React.DragEvent<HTMLElement>) => event.preventDefault();
-
-const vehicleStyle = (vehicle: Vehicle) => {
-  const axisCenter = vehicle.axis === 'northSouth' ? CENTER_Y : CENTER_X;
-  const centerDelta = vehicle.position - axisCenter;
-  const distanceFromCenter = Math.abs(centerDelta);
-  const routeProgress = Math.max(0, Math.min(1, 1 - distanceFromCenter / 205));
-  const smoothRouteProgress = routeProgress * routeProgress * (3 - 2 * routeProgress);
-  const laneSide = vehicle.laneOffset < 0 ? -1 : 1;
-  const routedLaneOffset = vehicle.laneOffset + laneSide * 64 * smoothRouteProgress;
-  const routeSlope =
-    centerDelta === 0
-      ? 0
-      : laneSide * 64 * (-Math.sign(centerDelta) / 205) * 6 * routeProgress * (1 - routeProgress);
-  const steeringAngle = Math.atan(routeSlope) * (180 / Math.PI) * (vehicle.axis === 'northSouth' ? -1 : 1);
-  const centerX =
-    vehicle.direction === 'northbound' || vehicle.direction === 'southbound'
-      ? CENTER_X + routedLaneOffset
-      : vehicle.position;
-  const centerY =
-    vehicle.direction === 'eastbound' || vehicle.direction === 'westbound'
-      ? CENTER_Y + routedLaneOffset
-      : vehicle.position;
-  const rigSize = vehicle.length * 0.84;
-
-  const baseRotation =
-    vehicle.direction === 'northbound'
-      ? 180
-      : vehicle.direction === 'southbound'
-        ? 0
-        : vehicle.direction === 'eastbound'
-          ? -90
-          : 90;
-
-  const screenY = vehicle.axis === 'northSouth' ? vehicle.position : CENTER_Y + routedLaneOffset;
-  const perspectiveScale = Math.max(0.86, Math.min(1.12, 0.86 + (screenY / WORLD_HEIGHT) * 0.26));
-  const accelerationTilt = Math.max(-3.5, Math.min(3.5, -vehicle.acceleration * 0.08));
-  const speedLevel = Math.max(0, Math.min(1, vehicle.speed / 88));
-
-  return {
-    left: `${((centerX - rigSize / 2) / WORLD_WIDTH) * 100}%`,
-    top: `${((centerY - rigSize / 2) / WORLD_HEIGHT) * 100}%`,
-    width: `${((rigSize / WORLD_WIDTH) * 100).toFixed(3)}%`,
-    aspectRatio: '1',
-    zIndex: 12 + Math.round((screenY / WORLD_HEIGHT) * 8),
-    '--vehicle-rotation': `${(baseRotation + steeringAngle).toFixed(2)}deg`,
-    '--vehicle-scale': perspectiveScale.toFixed(3),
-    '--accel-tilt': `${accelerationTilt.toFixed(2)}deg`,
-    '--speed-level': speedLevel.toFixed(3),
-    '--motion-duration': `${Math.max(0.42, 1.3 - speedLevel * 0.7).toFixed(2)}s`,
-    '--wobble-delay': `${(-vehicle.wobbleSeed).toFixed(2)}s`,
-  } as React.CSSProperties;
-};
-
-interface TrafficSignalProps {
-  position: 'far-left' | 'far-right' | 'near-left' | 'near-right';
-  state: 'red' | 'amber' | 'green';
-}
-
-const TrafficSignal = ({ position, state }: TrafficSignalProps) => (
-  <div className={`signal-cluster signal-cluster--${position}`} aria-hidden="true">
-    <img
-      key={state}
-      className="signal-cluster__body"
-      src={`/images/signals/juniper-signal-${state}-v3.png`}
-      alt=""
-      draggable={false}
-      decoding="async"
-    />
-  </div>
-);
 
 interface HelpDialogProps {
   onClose: () => void;
@@ -129,6 +56,18 @@ const HelpDialog = ({ onClose }: HelpDialogProps) => (
   </div>
 );
 
+const MicReadout = ({ snapshot }: { snapshot: MicSnapshot }) => (
+  <>
+    <div className="listening-row">
+      <span className={`permission-dot permission-dot--${snapshot.permission}`} />
+      <span>{snapshot.permission === 'granted' ? 'Live mic' : 'Microphone off'}</span>
+      <strong>{snapshot.smoothedPitch ? `${Math.round(snapshot.smoothedPitch)} Hz` : '—'}</strong>
+    </div>
+    <meter className="input-meter" min={0} max={1} value={snapshot.volume} aria-label="Microphone level" />
+    <p className="input-reading">{snapshot.permission === 'granted' ? snapshot.transcript : 'Waiting for microphone'}</p>
+  </>
+);
+
 interface TitleScreenProps {
   highScore: number;
   showHelp: boolean;
@@ -136,12 +75,12 @@ interface TitleScreenProps {
   onManualStart: () => void;
   onOpenHelp: () => void;
   onCloseHelp: () => void;
+  onCheckMic: () => void;
+  micCheck: React.ReactNode;
 }
 
-const TitleScreen = ({ highScore, showHelp, onVoiceStart, onManualStart, onOpenHelp, onCloseHelp }: TitleScreenProps) => (
+const TitleScreen = ({ highScore, showHelp, onVoiceStart, onManualStart, onOpenHelp, onCloseHelp, onCheckMic, micCheck }: TitleScreenProps) => (
   <main className="title-page" onDragStart={preventNativeDrag}>
-    <div className="title-page__glow title-page__glow--one" />
-    <div className="title-page__glow title-page__glow--two" />
     <div className="title-layout">
       <section className="intro-copy">
         <div className="intro-brand">
@@ -149,9 +88,8 @@ const TitleScreen = ({ highScore, showHelp, onVoiceStart, onManualStart, onOpenH
           Juniper Junction Dispatch
         </div>
         <div className="intro-heading">
-          <p className="card__eyebrow">A tiny city that listens</p>
           <h1><span>Voice</span><span>Traffic Cop</span></h1>
-          <p className="intro-lead">Conduct rush hour with a hum. Guide Pip, clear the queues, and keep the coziest crossing in town moving.</p>
+          <p className="intro-lead">Hum low to open North–South. Hum high to open East–West. Keep Juniper Junction moving.</p>
         </div>
 
         <div className="feature-pills" aria-label="Game features">
@@ -163,68 +101,65 @@ const TitleScreen = ({ highScore, showHelp, onVoiceStart, onManualStart, onOpenH
         <div className="start-actions">
           <button className="primary-button primary-button--voice" type="button" onClick={onVoiceStart}>
             <span className="button-icon" aria-hidden="true">●</span>
-            <span><small>Recommended</small>Play with voice</span>
+            <span>Play with voice</span>
           </button>
           <button className="secondary-button" type="button" onClick={onManualStart}>Play with keys</button>
         </div>
 
         <div className="intro-footer">
           <button type="button" className="text-button" onClick={onOpenHelp}>How to play <kbd>H</kbd></button>
+          <button type="button" className="text-button" onClick={onCheckMic}>Test microphone</button>
           <span>Personal best <strong>{highScore.toLocaleString()}</strong></span>
         </div>
       </section>
 
       <section className="intro-art" aria-label="Pip directing traffic in Juniper Junction">
         <img src="/images/voice-traffic-cop-hero.png" alt="Pip the hedgehog directing colorful cars with glowing sound waves" draggable={false} decoding="async" fetchPriority="high" />
-        <div className="art-vignette" />
         <div className="art-caption">
           <span className="live-dot" />
           <span><small>First assignment</small><strong>Rookie Patrol</strong></span>
         </div>
-        <div className="art-callout art-callout--low"><b>Low hum</b><span>North–South</span></div>
-        <div className="art-callout art-callout--high"><b>High hum</b><span>East–West</span></div>
       </section>
     </div>
     {showHelp && <HelpDialog onClose={onCloseHelp} />}
+    {micCheck}
   </main>
 );
 
 function App() {
   const [game, setGame] = useState<GameState>(createInitialState);
-  const [stageScale, setStageScale] = useState(1);
   const [controlMode, setControlMode] = useState<ControlMode>('voice');
   const [highScore, setHighScore] = useState(getStoredBest);
   const [showHelp, setShowHelp] = useState(false);
+  const [micCheck, setMicCheck] = useState<'closed' | 'idle' | 'requesting' | 'ready' | 'unavailable'>('closed');
+  const micDialogRef = useRef<HTMLDialogElement>(null);
+  const startingRef = useRef(false);
   const [pipIdlePose, setPipIdlePose] = useState<PipPose>('idle');
   const [musicEnabled, setMusicEnabled] = useState(true);
   const {
     snapshot,
     laneControl: microphoneControl,
     requestPermission,
-    stopMonitoring,
+    resetMicrophone,
     errorMessage,
   } = useMicrophoneControls();
   const { play: playTownMusic, pause: pauseTownMusic, stop: stopTownMusic } = useTownMusic();
-  const manual = useManualControls();
+  const manual = useManualControls(game.phase === 'running' && controlMode === 'manual' && !showHelp);
   const lastFrameRef = useRef<number | null>(null);
   const baselineBestRef = useRef(highScore);
 
   const laneControl = controlMode === 'voice' ? microphoneControl : manual.laneControl;
+  const laneControlRef = useRef(laneControl);
+  const micCheckOpen = micCheck !== 'closed';
 
   useEffect(() => {
-    const updateScale = () => {
-      const horizontalPadding = 20;
-      const verticalPadding = 20;
-      const availableWidth = window.innerWidth - horizontalPadding;
-      const availableHeight = window.innerHeight - verticalPadding;
-      const nextScale = Math.min(availableWidth / WORLD_WIDTH, availableHeight / WORLD_HEIGHT);
-      setStageScale(Math.max(0.24, nextScale));
-    };
+    laneControlRef.current = laneControl;
+  }, [laneControl]);
 
-    updateScale();
-    window.addEventListener('resize', updateScale);
-    return () => window.removeEventListener('resize', updateScale);
-  }, []);
+  useEffect(() => {
+    const dialog = micDialogRef.current;
+    if (micCheckOpen && dialog && !dialog.open) dialog.showModal();
+  }, [micCheckOpen]);
 
   useEffect(() => {
     let animationFrame = 0;
@@ -232,13 +167,13 @@ function App() {
       const last = lastFrameRef.current ?? now;
       const delta = Math.min(0.033, (now - last) / 1000);
       lastFrameRef.current = now;
-      setGame((current) => updateGame(current, laneControl, delta));
+      setGame((current) => updateGame(current, laneControlRef.current, delta));
       animationFrame = requestAnimationFrame(tick);
     };
 
     animationFrame = requestAnimationFrame(tick);
     return () => cancelAnimationFrame(animationFrame);
-  }, [laneControl]);
+  }, []);
 
   useEffect(() => {
     if (game.score <= highScore) return;
@@ -292,7 +227,6 @@ function App() {
     };
   }, [game.phase, togglePause]);
 
-  useEffect(() => () => stopMonitoring(), [stopMonitoring]);
 
   useEffect(() => {
     if (game.phase === 'running' && musicEnabled) playTownMusic();
@@ -320,23 +254,32 @@ function App() {
   }, [game.phase]);
 
   const startRun = async (mode: ControlMode) => {
+    if (startingRef.current) return;
+    startingRef.current = true;
     // Start from the button gesture so browsers allow Web Audio playback.
     if (musicEnabled) playTownMusic();
     let selectedMode = mode;
     if (mode === 'voice') {
       const permissionGranted = await requestPermission();
       if (!permissionGranted) selectedMode = 'manual';
+    } else {
+      resetMicrophone();
     }
+    micDialogRef.current?.close();
+    setMicCheck('closed');
     setControlMode(selectedMode);
     baselineBestRef.current = highScore;
     lastFrameRef.current = performance.now();
     setGame(startGame());
+    startingRef.current = false;
   };
 
   const switchControlMode = async (mode: ControlMode) => {
-    if (mode === 'voice' && snapshot.permission !== 'granted') {
+    if (mode === 'voice') {
       const permissionGranted = await requestPermission();
       if (!permissionGranted) return;
+    } else {
+      resetMicrophone();
     }
     setControlMode(mode);
   };
@@ -348,7 +291,22 @@ function App() {
     setGame(startGame());
   };
 
-  const returnToTitle = () => setGame(createInitialState());
+  const returnToTitle = () => {
+    resetMicrophone();
+    setGame(createInitialState());
+  };
+
+  const checkMicrophone = async () => {
+    setMicCheck('requesting');
+    setMicCheck(await requestPermission() ? 'ready' : 'unavailable');
+  };
+
+  const closeMicCheck = () => {
+    if (micCheck === 'requesting') return;
+    resetMicrophone();
+    micDialogRef.current?.close();
+    setMicCheck('closed');
+  };
 
   const toggleTownMusic = () => {
     if (musicEnabled) {
@@ -370,14 +328,35 @@ function App() {
         onManualStart={() => void startRun('manual')}
         onOpenHelp={() => setShowHelp(true)}
         onCloseHelp={() => setShowHelp(false)}
+        onCheckMic={() => setMicCheck('idle')}
+        micCheck={micCheckOpen && (
+          <dialog
+            ref={micDialogRef}
+            className="mic-check"
+            aria-labelledby="mic-check-title"
+            onCancel={(event) => { event.preventDefault(); closeMicCheck(); }}
+          >
+            <h2 id="mic-check-title">Microphone check</h2>
+            <p>Your audio is analyzed in this browser. Try one low hum, then one high hum.</p>
+            {micCheck === 'ready' && <MicReadout snapshot={snapshot} />}
+            {micCheck === 'unavailable' && <p className="control-error" role="alert">{errorMessage} Check site permissions or continue with keys and touch.</p>}
+            <div className="start-actions">
+              {micCheck === 'ready' ? (
+                <button className="primary-button" type="button" onClick={() => void startRun('voice')}>Start voice patrol</button>
+              ) : (
+                <button className="primary-button" type="button" disabled={micCheck === 'requesting'} onClick={() => void checkMicrophone()}>
+                  {micCheck === 'requesting' ? 'Waiting for permission…' : 'Enable microphone'}
+                </button>
+              )}
+              <button className="secondary-button" type="button" disabled={micCheck === 'requesting'} onClick={() => void startRun('manual')}>Play with keys</button>
+              <button className="text-button" type="button" disabled={micCheck === 'requesting'} onClick={closeMicCheck}>Close</button>
+            </div>
+          </dialog>
+        )}
       />
     );
   }
 
-  const signalStateForAxis = (axis: Axis): TrafficSignalProps['state'] => {
-    if (game.emergencyStop || game.signalPhase === 'allRed' || game.activeAxis !== axis) return 'red';
-    return game.signalPhase === 'yellow' ? 'amber' : 'green';
-  };
   const trafficMood =
     game.congestion < 28 ? 'Gliding' : game.congestion < 58 ? 'Building' : game.congestion < 82 ? 'Tense' : 'Critical';
   const levelName =
@@ -387,6 +366,7 @@ function App() {
   const queueNS = game.vehicles.filter((vehicle) => vehicle.axis === 'northSouth').length;
   const queueEW = game.vehicles.filter((vehicle) => vehicle.axis === 'eastWest').length;
   const currentQueue = game.activeAxis === 'northSouth' ? queueNS : queueEW;
+  const laneOpen = signalAspect(game, game.activeAxis) === 'green';
   const currentInput =
     controlMode === 'voice'
       ? snapshot.command === 'none'
@@ -396,7 +376,7 @@ function App() {
   const isPlaying = game.phase === 'running' || game.phase === 'paused';
   const pipPose: PipPose = game.emergencyStop
     ? 'stop'
-    : game.signalPhase !== 'green'
+    : !laneOpen
       ? 'stop'
       : game.congestion >= 70
         ? 'jam'
@@ -409,7 +389,7 @@ function App() {
     ? 'All paws — stop!'
     : game.signalPhase === 'yellow'
       ? 'Easy now — lights changing.'
-      : game.signalPhase === 'allRed'
+      : !laneOpen
         ? 'Clearing the junction…'
         : game.congestion >= 70
           ? 'Queue building — hold steady!'
@@ -418,9 +398,9 @@ function App() {
             : currentInput;
 
   const controlButtonProps = (axis: Axis) => ({
-    className: `lane-button ${game.activeAxis === axis && game.signalPhase === 'green' && !game.emergencyStop ? 'lane-button--active' : ''}`,
+    className: `lane-button ${signalAspect(game, axis) === 'green' ? 'lane-button--active' : ''}`,
     onClick: () => manual.chooseAxis(axis),
-    'aria-pressed': game.activeAxis === axis && game.signalPhase === 'green' && !game.emergencyStop,
+    'aria-pressed': signalAspect(game, axis) === 'green',
   });
 
   return (
@@ -431,20 +411,12 @@ function App() {
             className={`scene-stage ${game.phase === 'running' ? 'scene--live' : ''} ${game.phase === 'paused' ? 'scene--paused' : ''} ${game.dangerFlash > 0.1 ? 'scene--danger' : ''}`}
             style={
               {
-                width: `${WORLD_WIDTH}px`,
-                height: `${WORLD_HEIGHT}px`,
-                transform: `translate(-50%, -50%) scale(${stageScale})`,
                 '--danger-flash': game.dangerFlash,
                 '--delight-flash': game.delightFlash,
                 '--boost-flash': Math.min(1, game.boostTimer / 4),
               } as React.CSSProperties
             }
           >
-            <div className="sun-glow" />
-            <div className="cloud cloud--one" />
-            <div className="cloud cloud--two" />
-            <div className="skyline skyline--far" />
-            <div className="skyline skyline--mid" />
 
             <header className="hud">
               <div className="brand-chip">
@@ -496,57 +468,27 @@ function App() {
               </div>
             </header>
 
-            <div className="objective-strip">
-              <span className="objective-strip__label">
-                {game.signalPhase === 'green' && !game.emergencyStop ? 'Open lane' : game.signalPhase === 'yellow' ? 'Changing lights' : 'Safety clearance'}
-              </span>
-              <strong>{game.signalPhase === 'green' && !game.emergencyStop ? axisLabel(game.activeAxis) : 'All lanes holding'}</strong>
-              <span className="objective-strip__queue">{currentQueue} vehicles in route</span>
-            </div>
-
             <div className="street-stage">
-              <img className="game-world-art" src="/images/juniper-junction-world-no-signals-v2.png" alt="" aria-hidden="true" draggable={false} decoding="async" />
-              <div className="world-lighting" aria-hidden="true" />
-              <div className="ambient-particles" aria-hidden="true">
-                {new Array(14).fill(null).map((_, index) => <i key={index} />)}
+              <div className="objective-strip" data-open={laneOpen}>
+                <span className="objective-strip__label" aria-hidden="true">
+                  {laneOpen ? (game.activeAxis === 'northSouth' ? '↕' : '↔') : '■'}
+                </span>
+                <strong>{laneOpen ? `${axisLabel(game.activeAxis)} open` : 'All lanes holding'}</strong>
+                <span className="objective-strip__queue">
+                  {laneOpen ? `${currentQueue} in route` : game.emergencyStop ? 'Emergency stop' : 'Changing lights'}
+                </span>
               </div>
-              <div className="city-block city-block--top-left">
-                <div className="building cluster-a">
-                  <span className="awning" />
-                  <span className="window window--round" />
-                  <span className="window window--tall" />
-                </div>
-                <div className="tiny-lane tiny-lane--left" />
-              </div>
-              <div className="city-block city-block--top-right">
-                <div className="building cluster-b">
-                  <span className="sign sign--tram">Tram</span>
-                  <span className="window window--wide" />
-                </div>
-              </div>
-              <div className="city-block city-block--bottom-left">
-                <div className="building cluster-c">
-                  <span className="sign sign--tea">Berry Tea</span>
-                  <span className="planter" />
-                </div>
-              </div>
-              <div className="city-block city-block--bottom-right">
-                <div className="building cluster-d">
-                  <span className="sign sign--mail">Snail Mail</span>
-                  <span className="bench" />
-                </div>
-              </div>
-
+              <JunctionViewport game={game} />
               <div className="intersection-center">
                 <div className="roundabout-bloom" />
-                <div className={`voice-wave voice-wave--${game.activeAxis} ${game.emergencyStop || game.signalPhase === 'allRed' ? 'voice-wave--stop' : ''} ${game.boostTimer > 0.5 ? 'voice-wave--boost' : ''}`} aria-hidden="true">
+                <div className={`voice-wave voice-wave--${game.activeAxis} ${!laneOpen ? 'voice-wave--stop' : ''} ${game.boostTimer > 0.5 ? 'voice-wave--boost' : ''}`} aria-hidden="true">
                   <i />
                   <i />
                   <i />
                 </div>
                 <div className="pip">
                   <div className={`speech-ribbon ${laneControl.inputLabel ? 'speech-ribbon--live' : ''}`}>{pipMessage}</div>
-                  <div className={`pip-avatar pip-avatar--${game.activeAxis} ${game.congestion > 70 ? 'pip-avatar--urgent' : ''} ${game.emergencyStop || game.signalPhase !== 'green' ? 'pip-avatar--stop' : ''}`}>
+                  <div className={`pip-avatar pip-avatar--${game.activeAxis} ${game.congestion > 70 ? 'pip-avatar--urgent' : ''} ${!laneOpen ? 'pip-avatar--stop' : ''}`}>
                     <span className="pip-avatar__glow" />
                     <img
                       key={pipPose}
@@ -560,65 +502,6 @@ function App() {
                 </div>
               </div>
 
-              <TrafficSignal position="far-left" state={signalStateForAxis('northSouth')} />
-              <TrafficSignal position="far-right" state={signalStateForAxis('eastWest')} />
-              <TrafficSignal position="near-left" state={signalStateForAxis('eastWest')} />
-              <TrafficSignal position="near-right" state={signalStateForAxis('northSouth')} />
-
-              <div className="vehicle-layer">
-                {game.vehicles.map((vehicle) => {
-                  const isClearOfSideBuildings =
-                    vehicle.axis === 'northSouth' ||
-                    (vehicle.position >= HORIZONTAL_ROAD_MOUTH_LEFT && vehicle.position <= HORIZONTAL_ROAD_MOUTH_RIGHT);
-                  if (!isClearOfSideBuildings) return null;
-
-                  const waiting = vehicle.speed < 7 && vehicle.waitingTime > 0.6;
-                  const braking = vehicle.acceleration < -18;
-                  const boosted = vehicle.axis === game.activeAxis && game.signalPhase === 'green' && game.boostTimer > 0.5 && vehicle.speed > 25;
-                  const mood = game.congestion > 70 ? '!' : vehicle.id % 2 === 0 ? '…' : '♪';
-                  const showMood =
-                    waiting &&
-                    (vehicle.axis === 'northSouth' ||
-                      (vehicle.position >= HORIZONTAL_MOOD_LEFT && vehicle.position <= HORIZONTAL_MOOD_RIGHT));
-
-                  return (
-                    <div
-                      className={`vehicle vehicle--${vehicle.kind} ${vehicle.axis === game.activeAxis ? 'vehicle--favored' : ''} ${vehicle.speed > 7 ? 'vehicle--moving' : ''} ${waiting ? 'vehicle--waiting' : ''} ${braking ? 'vehicle--braking' : ''} ${boosted ? 'vehicle--boosted' : ''}`}
-                      style={vehicleStyle(vehicle)}
-                      key={vehicle.id}
-                      aria-hidden="true"
-                    >
-                      <div className="vehicle__rig">
-                        <span className="vehicle__ground-shadow" />
-                        <span className="vehicle__speed-trail"><i /><i /></span>
-                        <span className="vehicle__exhaust"><i /><i /><i /></span>
-                        <img
-                          className="vehicle__sprite"
-                          src={`/images/vehicles/${vehicle.kind}-top.webp`}
-                          alt=""
-                          draggable={false}
-                          decoding="async"
-                        />
-                        <span className="vehicle__headlight vehicle__headlight--one" />
-                        <span className="vehicle__headlight vehicle__headlight--two" />
-                        <span className="vehicle__brake-light vehicle__brake-light--one" />
-                        <span className="vehicle__brake-light vehicle__brake-light--two" />
-                      </div>
-                      {showMood && <span className="vehicle__mood">{mood}</span>}
-                    </div>
-                  );
-                })}
-              </div>
-
-              <div className="building-occlusion" aria-hidden="true">
-                <img
-                  className="building-occlusion__image building-occlusion__image--left"
-                  src="/images/juniper-junction-world-no-signals-v2.png"
-                  alt=""
-                  draggable={false}
-                  decoding="async"
-                />
-              </div>
             </div>
 
             <aside className="control-dock" aria-label="Traffic controls">
@@ -639,25 +522,12 @@ function App() {
 
               {controlMode === 'voice' ? (
                 <>
-                  <div className="listening-row">
-                    <span className={`permission-dot permission-dot--${snapshot.permission}`} />
-                    <span>{snapshot.permission === 'granted' ? 'Live input' : 'Microphone idle'}</span>
-                    <strong>{snapshot.smoothedPitch ? `${Math.round(snapshot.smoothedPitch)} Hz` : '—'}</strong>
-                  </div>
-                  <div className="audio-visualizer" aria-label={`Microphone level ${Math.round(snapshot.volume * 100)} percent`}>
-                    {new Array(12).fill(null).map((_, index) => (
-                      <i
-                        key={index}
-                        style={{ '--bar-level': Math.max(0.12, Math.min(1, snapshot.volume * 2.8 - index * 0.045)) } as React.CSSProperties}
-                      />
-                    ))}
-                  </div>
+                  <MicReadout snapshot={snapshot} />
                   {snapshot.permission !== 'granted' && (
                     <button className="dock-action" type="button" onClick={() => void switchControlMode('voice')}>
                       Enable microphone
                     </button>
                   )}
-                  {errorMessage && <p className="control-error">{errorMessage}</p>}
                   <p className="control-hint">Low hum = N–S · High hum = E–W · Loud = Stop</p>
                 </>
               ) : (
@@ -685,6 +555,17 @@ function App() {
                       onPointerUp={() => manual.setBoost(false)}
                       onPointerLeave={() => manual.setBoost(false)}
                       onPointerCancel={() => manual.setBoost(false)}
+                      onKeyDown={(event) => {
+                        if (event.key === ' ' || event.key === 'Enter') {
+                          event.preventDefault();
+                          event.stopPropagation();
+                          manual.setBoost(true);
+                        }
+                      }}
+                      onKeyUp={(event) => {
+                        if (event.key === ' ' || event.key === 'Enter') manual.setBoost(false);
+                      }}
+                      onBlur={() => manual.setBoost(false)}
                     >
                       <span>✦</span>
                       <strong>Boost</strong>
@@ -693,12 +574,13 @@ function App() {
                   </div>
                 </>
               )}
+              {errorMessage && <p className="control-error" role="status">{errorMessage} Check site permissions to use voice, or continue with keys and touch.</p>}
             </aside>
 
             <aside className="shift-panel" aria-label="Traffic health">
               <div className="shift-panel__top">
                 <div>
-                  <span className="panel-kicker">Traffic mood</span>
+                  <span className="panel-kicker">Congestion · {Math.round(congestionLevel)}%</span>
                   <strong>{trafficMood}</strong>
                 </div>
                 <span className={`mood-orb mood-orb--${trafficMood.toLowerCase()}`} />
@@ -716,7 +598,7 @@ function App() {
               <div className="shift-stats">
                 <span><b>{game.carsCleared}</b> cleared</span>
                 <span><b>{formatTime(game.elapsed)}</b> shift</span>
-                <span><b>{axisShortLabel(game.activeAxis)}</b> open</span>
+                <span>{laneOpen ? <><b>{axisShortLabel(game.activeAxis)}</b> open</> : 'All lanes held'}</span>
               </div>
               <div className="level-progress">
                 <span style={{ width: `${Math.max(4, progressToNext)}%` }} />
@@ -768,10 +650,6 @@ function App() {
             {showHelp && <HelpDialog onClose={() => setShowHelp(false)} />}
           </div>
         </div>
-      </div>
-      <div className="orientation-hint" role="status">
-        <strong>Turn your screen sideways</strong>
-        <span>Juniper Junction plays best in landscape.</span>
       </div>
     </main>
   );

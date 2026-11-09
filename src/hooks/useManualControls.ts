@@ -3,7 +3,7 @@ import type { Axis, LaneControl } from '../game/types';
 
 const STOP_DURATION_MS = 850;
 
-export const useManualControls = () => {
+export const useManualControls = (enabled: boolean) => {
   const [activeAxis, setActiveAxis] = useState<Axis>('northSouth');
   const [emergencyStop, setEmergencyStop] = useState(false);
   const [boosting, setBoosting] = useState(false);
@@ -33,6 +33,7 @@ export const useManualControls = () => {
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
+      if (!enabled || event.defaultPrevented || event.altKey || event.ctrlKey || event.metaKey) return;
       if (event.repeat && event.code !== 'ShiftLeft' && event.code !== 'ShiftRight') return;
 
       if (['ArrowUp', 'ArrowDown', 'KeyW', 'KeyS', 'Digit1'].includes(event.code)) {
@@ -59,12 +60,18 @@ export const useManualControls = () => {
 
     window.addEventListener('keydown', onKeyDown);
     window.addEventListener('keyup', onKeyUp);
+    const onBlur = () => setBoosting(false);
+    window.addEventListener('blur', onBlur);
     return () => {
       window.removeEventListener('keydown', onKeyDown);
       window.removeEventListener('keyup', onKeyUp);
-      if (stopTimerRef.current) window.clearTimeout(stopTimerRef.current);
+      window.removeEventListener('blur', onBlur);
     };
-  }, [chooseAxis, setBoost, triggerStop]);
+  }, [chooseAxis, enabled, setBoost, triggerStop]);
+
+  useEffect(() => () => {
+    if (stopTimerRef.current) window.clearTimeout(stopTimerRef.current);
+  }, []);
 
   const laneControl = useMemo<LaneControl>(
     () => ({
