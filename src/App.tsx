@@ -114,7 +114,15 @@ const TitleScreen = ({ highScore, showHelp, onVoiceStart, onManualStart, onOpenH
       </section>
 
       <section className="intro-art" aria-label="Pip directing traffic in Juniper Junction">
-        <img src="/images/voice-traffic-cop-hero.png" alt="Pip the hedgehog directing colorful cars with glowing sound waves" draggable={false} decoding="async" fetchPriority="high" />
+        <img
+          src="/images/juniper-arcade-poster.jpg"
+          alt="Pixel-art Pip directing traffic at Juniper Junction"
+          width={1536}
+          height={1024}
+          draggable={false}
+          decoding="async"
+          fetchPriority="high"
+        />
         <div className="art-caption">
           <span className="live-dot" />
           <span><small>First assignment</small><strong>Rookie Patrol</strong></span>
