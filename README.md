@@ -45,8 +45,10 @@ The first shift starts gently. Traffic gets busier as your score unlocks **Rooki
 
 ## What makes it different
 
+![The Three.js intersection and traffic controls during a shift](docs/juniper-junction.png)
+
 - **Your voice is the controller** — pitch selects a lane, volume triggers an emergency stop, and tone stability creates a boost.
-- **A tiny animated world** — expressive vehicles, neighborhood shops, traffic signals, and Pip all react in real time.
+- **A playable 3D intersection** — switch between the tilted and overhead views. The illustrated junction takes over if WebGL 2 is unavailable or stops working.
 - **Designed to feel forgiving** — command smoothing, brief control holds, early-game grace, and gradual difficulty keep the game approachable.
 - **Private by design** — microphone samples stay inside the Web Audio pipeline on your device.
 - **Play your way** — switch between voice, keyboard, and touch controls during a shift.
@@ -61,12 +63,12 @@ Microphone access requires a secure context, so use the HTTPS deployment or `loc
 
 ## Run locally
 
-You will need a recent version of [Node.js](https://nodejs.org/).
+You will need [Node.js](https://nodejs.org/) 24 or later.
 
 ```bash
 git clone https://github.com/Mike-Animal-Counseling/voice-traffic-cop.git
-cd Voice-Traffic-Cop
-npm install
+cd voice-traffic-cop
+npm ci
 npm run dev
 ```
 
@@ -83,6 +85,8 @@ npm run preview
 
 The microphone hook samples an `AnalyserNode`, estimates pitch with autocorrelation, smooths recent readings, and maps the result to a small command set. A second input adapter provides keyboard and touch commands through the same lane-control interface. The game loop applies either source while tracking vehicle spacing, conflict cooldowns, congestion, scoring, streaks, progression, and local records.
 
+Three.js loads when a shift starts. Both views read the same vehicle positions and signal state from the traffic simulation.
+
 ```text
 Microphone
     ↓
@@ -98,18 +102,20 @@ src/
 ├── game/
 │   ├── constants.ts         # World dimensions and tuning values
 │   ├── logic.ts             # Simulation, scoring, spawning, progression
+│   ├── JunctionViewport.tsx # Renderer selection and camera control
+│   ├── junction3d.ts        # Three.js vehicles, signals, and camera
 │   └── types.ts             # Shared game types
 ├── hooks/
 │   ├── useManualControls.ts
 │   └── useMicrophoneControls.ts
 ├── App.tsx                  # Game scene and HUD
 ├── main.tsx
-└── styles.css               # The complete illustrated world
+└── arcade.css               # Arcade title, HUD, and responsive layout
 ```
 
 ## Roadmap
 
-- In-game microphone calibration
+- User-adjustable pitch calibration
 - Daily challenges and shareable shift reports
 - More vehicles, neighborhoods, and weather variants
 - Expanded browser and microphone-device testing

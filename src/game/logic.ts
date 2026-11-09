@@ -11,6 +11,7 @@ import {
   WORLD_HEIGHT,
   WORLD_WIDTH,
 } from './constants';
+import { signalAspect } from './signals';
 import type { Axis, DifficultyTier, Direction, GameState, Vehicle } from './types';
 
 interface DifficultyConfig {
@@ -126,10 +127,7 @@ const distanceToStopLine = (vehicle: Vehicle): number => {
 };
 
 const axisHasGreen = (vehicle: Vehicle, state: GameState) =>
-  !state.emergencyStop &&
-  state.signalPhase === 'green' &&
-  state.activeAxis === vehicle.axis &&
-  state.clearanceAxis === null;
+  signalAspect(state, vehicle.axis) === 'green';
 
 const desiredSpeed = (vehicle: Vehicle, state: GameState): number => {
   if (state.emergencyStop) return 0;
