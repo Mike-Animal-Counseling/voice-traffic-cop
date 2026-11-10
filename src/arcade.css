@@ -86,7 +86,8 @@ body { overflow: auto; }
 .title-layout .intro-footer .text-button, .title-layout .intro-footer > span { font-size: .8rem; }
 .title-layout .intro-footer .text-button { min-height: 44px; }
 .intro-footer kbd { color: var(--road-ink); border-color: currentColor; background: none; }
-.intro-art img { filter: saturate(.84) contrast(1.04); }
+.intro-art { background: #182c57; }
+.intro-art img { object-position: 54% center; }
 .art-caption {
   background: var(--tarmac);
   color: var(--road-ink);
@@ -199,7 +200,12 @@ button:focus-visible { outline: 2px solid var(--road-ink); outline-offset: 3px; 
   visibility: hidden;
 }
 .junction-surface[data-active="true"] { visibility: visible; }
-.junction-surface canvas { display: block; width: 100%; height: 100%; }
+.junction-surface canvas {
+  display: block;
+  width: 100%;
+  height: 100%;
+  image-rendering: pixelated;
+}
 .junction-camera {
   position: absolute;
   inset: .75rem .75rem auto auto;

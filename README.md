@@ -4,13 +4,13 @@
 
 ### Hum low. Sing high. Keep Juniper Junction moving.
 
-An original voice-controlled browser game where your pitch directs traffic through a cozy animal city.
+A voice-controlled browser arcade game where your pitch directs traffic through a pixel-art animal city.
 
 [**Play in your browser**](https://voice-traffic-cop.vercel.app) · [How to play](#how-to-play) · [Run locally](#run-locally)
 
 </div>
 
-![Pip directing traffic at Juniper Junction](public/images/voice-traffic-cop-hero.png)
+![Pip directing traffic at Juniper Junction in comic-book pixel art](public/images/juniper-arcade-poster.jpg)
 
 <div align="center">
 
@@ -48,7 +48,7 @@ The first shift starts gently. Traffic gets busier as your score unlocks **Rooki
 ![The Three.js intersection and traffic controls during a shift](docs/juniper-junction.png)
 
 - **Your voice is the controller** — pitch selects a lane, volume triggers an emergency stop, and tone stability creates a boost.
-- **A playable 3D intersection** — switch between the tilted and overhead views. The illustrated junction takes over if WebGL 2 is unavailable or stops working.
+- **A playable 3D intersection** — comic-book colors and a coarse pixel grid give the street an arcade look. Switch between tilted and overhead views. The illustrated junction takes over if WebGL 2 is unavailable or stops working.
 - **Designed to feel forgiving** — command smoothing, brief control holds, early-game grace, and gradual difficulty keep the game approachable.
 - **Private by design** — microphone samples stay inside the Web Audio pipeline on your device.
 - **Play your way** — switch between voice, keyboard, and touch controls during a shift.

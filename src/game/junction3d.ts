@@ -31,16 +31,15 @@ const aspects: SignalAspect[] = ['red', 'amber', 'green'];
 
 export function createJunction(host: HTMLDivElement, onUnavailable: () => void): JunctionRenderer {
   const canvas = document.createElement('canvas');
-  const context = canvas.getContext('webgl2', { alpha: false, antialias: true, powerPreference: 'low-power' });
+  const context = canvas.getContext('webgl2', { alpha: false, antialias: false, powerPreference: 'low-power' });
   if (!context) throw new Error('WebGL 2 is unavailable');
   const renderer = new WebGLRenderer({ canvas, context });
-  renderer.setPixelRatio(Math.min(1.5, window.devicePixelRatio || 1));
 
   const scene = new Scene();
   const camera = new OrthographicCamera(-1, 1, 1, -1, 5, 4000);
-  const sunlight = new DirectionalLight('#fff0ce', 2);
+  const sunlight = new DirectionalLight('#fff4de', 2.1);
   sunlight.position.set(-430, 900, 220);
-  scene.add(new HemisphereLight('#e3edff', '#8797a2', 1.65), sunlight);
+  scene.add(new HemisphereLight('#d5e6ff', '#526ba0', 1.4), sunlight);
 
   const box = new BoxGeometry(1, 1, 1);
   const cylinder = new CylinderGeometry(.5, .5, 1, 8);
@@ -116,7 +115,8 @@ export function createJunction(host: HTMLDivElement, onUnavailable: () => void):
   });
 
   const rubber = paint('#212c3c');
-  const glass = paint('#4b6d83');
+  const ink = paint('#101b34');
+  const glass = paint('#355b91');
   const headlight = new MeshBasicMaterial({ color: '#fff1c4' });
   const brakeLight = new MeshBasicMaterial({ color: '#ff7865' });
   const trailPaint = new MeshBasicMaterial({ color: '#6fe1f5' });
@@ -126,13 +126,15 @@ export function createJunction(host: HTMLDivElement, onUnavailable: () => void):
   function makeCar(vehicle: Vehicle) {
     const car = new Group();
     const { length, width, color } = vehicle;
-    part(car, paint('#25344a'), 3, 1, 4, width * 1.16, 1, length * 1.06);
+    part(car, ink, 4, 1, 5, width + 12, 1, length + 12);
     const body = new Group();
     car.add(body);
     const bodyHeight = vehicle.kind === 'hopper' ? 22 : 17;
     const cabinLength = vehicle.kind === 'snail' ? length * .65 : length * .48;
-    part(body, paint(color.accent), 0, 8, 0, width, 9, length);
+    part(body, ink, 0, 8, 0, width + 4, 9, length + 4);
+    part(body, paint(color.accent), 0, 12, 0, width, 7, length);
     part(body, paint(color.body), 0, 9 + bodyHeight / 2, 0, width - 4, bodyHeight, length - 5);
+    part(body, ink, 0, bodyHeight + 11, -length * .08, width - 6, 7, cabinLength + 4);
     part(body, glass, 0, bodyHeight + 14, -length * .08, width - 11, 12, cabinLength);
     part(body, paint(color.roof), 0, bodyHeight + 21, -length * .08, width - 15, 5, cabinLength - 8);
     const brakeLights: Mesh[] = [];
@@ -142,7 +144,10 @@ export function createJunction(host: HTMLDivElement, onUnavailable: () => void):
       part(body, headlight, side * width * .31, 14, length / 2 - 1, 8, 5, 3);
       brakeLights.push(part(body, paint(color.accent), side * width * .32, 14, -length / 2, 8, 5, 3));
     }
-    const trail = part(car, trailPaint, 0, 2, -length * .81, 11, 2, length * .46);
+    const trail = new Group();
+    part(trail, trailPaint, -7, 2, -length * .77, 6, 2, length * .4);
+    part(trail, trailPaint, 7, 2, -length * .83, 6, 2, length * .4);
+    car.add(trail);
     const waitingMark = part(car, waitingPaint, 0, bodyHeight + 35, 0, 11, 6, 11);
     car.rotation.y = HEADING[vehicle.direction];
     scene.add(car);
@@ -169,7 +174,9 @@ export function createJunction(host: HTMLDivElement, onUnavailable: () => void):
     camera.top = halfHeight;
     camera.bottom = -halfHeight;
     camera.updateProjectionMatrix();
-    renderer.setSize(width, height, false);
+    // Draw the street on a coarse grid while the DOM controls stay at native resolution.
+    const pixelSize = width < 520 ? 2 : 3;
+    renderer.setSize(Math.ceil(width / pixelSize), Math.ceil(height / pixelSize), false);
     renderer.render(scene, camera);
   };
 
